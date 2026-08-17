@@ -9,6 +9,7 @@ FaceTrace 是一個本機執行的表情訊號日記原型。對鏡頭講 60 秒
 - Docs/CONFIRMED_PROJECT_CONTEXT.md
 - Docs/ROADMAP.md
 - Docs/CURRENT_TASK.md
+- Docs/references/DESIGN_EVIDENCE.md(設計決策的理論與法規依據;本機限定,不在 GitHub 上)
 
 ## 專案紅線(技術)
 - 系統永遠不輸出情緒標籤。只輸出訊號曲線、變化點、不確定性。程式碼、UI、註解裡都不准出現 anger、sadness、happiness 這類詞當輸出名。

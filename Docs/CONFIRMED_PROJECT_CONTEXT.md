@@ -17,6 +17,8 @@
 2. 全本機:執行期零網路,資料不出裝置。
 3. 不確定性可見:信心低就變灰,誠實是功能。
 
+各決策的完整依據見 Docs/references/DESIGN_EVIDENCE.md
+
 ## M0 範圍(8/23 前)
 四條訊號、60 秒 session、日記頁、變化點標記(rolling z-score)、replay 模式、錄製功能。
 到此為止。任何「順便加」寫進 ROADMAP 排隊。

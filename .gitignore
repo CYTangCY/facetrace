@@ -24,5 +24,8 @@ Thumbs.db
 # Session recordings (local data, never committed)
 recordings/
 
+# Local-only reference docs (design evidence, regulatory map — not pushed to GitHub)
+Docs/references/
+
 # NOTE: models/*.task is intentionally NOT ignored — the Face Landmarker
 # model file must be in the repo so a fresh clone runs fully offline.
