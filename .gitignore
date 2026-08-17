@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Session recordings (local data, never committed)
+recordings/
+
+# NOTE: models/*.task is intentionally NOT ignored — the Face Landmarker
+# model file must be in the repo so a fresh clone runs fully offline.
