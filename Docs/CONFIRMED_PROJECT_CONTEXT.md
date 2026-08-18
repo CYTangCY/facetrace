@@ -20,7 +20,8 @@
 各決策的完整依據見 Docs/references/DESIGN_EVIDENCE.md
 
 ## M0 範圍(8/23 前)
-四條訊號、60 秒 session、日記頁、變化點標記(rolling z-score)、replay 模式、錄製功能。
+四條訊號、60 秒 session、日記頁、變化點標記(PELT,動態計算前降頻到 2 Hz)、replay 模式、錄製功能。
+方法依據見 Docs/references/TIMESERIES_METHOD.md(2026-08-18 由 rolling z-score 改訂,經使用者同意)。
 到此為止。任何「順便加」寫進 ROADMAP 排隊。
 
 ## M1 方向(8/23 後,MUM 2026)
