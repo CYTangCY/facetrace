@@ -26,7 +26,7 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from facetrace.capture import CaptureError, FrameSource  # noqa: E402
-from facetrace.signals import SIGNAL_NAMES, MicLevel, SignalExtractor  # noqa: E402
+from facetrace.signals import SIGNAL_NAMES, MicLevel, SignalExtractor, SignalState  # noqa: E402
 
 from mediapipe.tasks.python import vision as mp_vision  # noqa: E402
 
@@ -69,12 +69,19 @@ def draw_mesh(frame_bgr, landmarks, full: bool = True) -> None:
 
 
 def format_line(sample, fps: float) -> str:
-    """一行文字:四條訊號 + 信心 + FPS。invalid 的欄位印 ----(不印假值)。"""
+    """一行文字:四條訊號 + 信心 + FPS。
+
+    三態(與 UI 的渲染一致):正常印數值;有量測但信心低印 ~數值(UI 畫灰線);
+    沒有量測印 ----(UI 把線斷開)。絕不印假值。
+    """
     parts = []
     for name in SIGNAL_NAMES:
         value = sample.values.get(name)
-        if value is None or not sample.valid.get(name, False):
+        state = sample.state.get(name, SignalState.ABSENT)
+        if state == SignalState.ABSENT or value is None:
             parts.append(f"{name}=  ----")
+        elif state == SignalState.UNCERTAIN:
+            parts.append(f"{name}=~{value:5.3f}")
         else:
             parts.append(f"{name}={value:6.3f}")
     face = "face" if sample.has_face else "NOFACE"

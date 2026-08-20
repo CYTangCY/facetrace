@@ -6,9 +6,14 @@ M0 只有這四條,不加第五條:
 - head_stability  由 facial transformation matrix 的逐幀變化率映射,0..1(越穩定越高)
 - mic_volume      麥克風 RMS 映射到 0..1(可選;沒有麥克風時整條缺席)
 
-每個取樣點都帶 valid 旗標:
-- 臉不在畫面、或追蹤信心低 → 該點 valid=False,下游 UI 畫成灰色。
-- 禁止內插填補 invalid 區段;invalid 時值為 None,不沿用上一幀。
+每個取樣點都帶三態旗標 SignalState(M0-T03 修正,理由見 run log M0-T03_001):
+- ABSENT     沒有量測(臉不在畫面、麥克風缺席)→ 值為 None,UI 把線斷開。
+- UNCERTAIN  有量測但追蹤信心低 → 值照常寫入,UI 畫成灰線(線是連的)。
+- OK         有量測且信心足夠 → 值照常,UI 畫正常顏色。
+
+這三態必須分開,否則紅線三「信心低就變灰」在畫面上永遠看不到灰線,只看得到
+斷點——因為「沒量到」和「量到但不可信」被壓成了同一種輸出。
+禁止內插填補 ABSENT 區段;ABSENT 時值為 None,不沿用上一幀。
 
 追蹤信心(代理指標):
 mediapipe 1.0.1 的 FaceLandmarkerResult 只有 face_landmarks /
@@ -28,6 +33,7 @@ import math
 import sys
 import threading
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Optional
 
 import numpy as np
@@ -39,7 +45,7 @@ SIGNAL_NAMES: tuple[str, ...] = ("brow_down", "mouth_smile", "head_stability", "
 
 # --- 追蹤信心代理指標 ---------------------------------------------------------
 CONFIDENCE_WINDOW = 15      # 近 15 幀 ≈ 30 FPS 下的 0.5 秒
-CONFIDENCE_THRESHOLD = 0.6  # 偵測率低於此值就視為追蹤不可靠 -> valid=False
+CONFIDENCE_THRESHOLD = 0.6  # 偵測率低於此值 -> UNCERTAIN(灰線),不是 ABSENT
 
 # --- head_stability 映射常數(由 scripts 外的實測校正而來,見 run log)---------
 # 實測(合成臉、已知角速度):完全靜止的雜訊底約 2.4 deg/s;1 deg/frame 的旋轉
@@ -61,19 +67,41 @@ MIC_SAMPLE_RATE = 16000
 MIC_BLOCK_SIZE = 1024
 
 
+class SignalState(IntEnum):
+    """單一訊號在單一時間點的三態。UI 的渲染方式直接由它決定。"""
+
+    ABSENT = 0     # 沒有量測 -> 值為 None -> 線斷開(NaN,絕不跨洞連線)
+    UNCERTAIN = 1  # 有量測但信心低 -> 值可用 -> 畫灰線(線是連的)
+    OK = 2         # 有量測且信心足夠 -> 畫正常顏色
+
+
 @dataclass
 class SignalSample:
     """單一時間點的四條訊號。
 
-    values[name] 為 None 代表該條訊號此刻沒有可信的值(臉不在、信心低、
-    或麥克風缺席)。valid[name] 同步為 False。不得用內插補這些洞。
+    state[name] 是唯一的真相來源;valid 與 measured 都由它推導,
+    所以不可能出現「valid=True 但沒量測」這種自相矛盾的組合。
+
+    - state == ABSENT     -> values[name] is None,UI 斷線
+    - state == UNCERTAIN  -> values[name] 有值,UI 畫灰線
+    - state == OK         -> values[name] 有值,UI 畫正常顏色
     """
 
     timestamp_ms: int
     values: dict[str, Optional[float]] = field(default_factory=dict)
-    valid: dict[str, bool] = field(default_factory=dict)
+    state: dict[str, SignalState] = field(default_factory=dict)
     confidence: float = 0.0     # 追蹤信心代理值 0..1(近 N 幀偵測率)
     has_face: bool = False
+
+    @property
+    def valid(self) -> dict[str, bool]:
+        """只有 OK 才算 valid(向後相容 T02 的 sample.valid[name] 用法)。"""
+        return {k: (v == SignalState.OK) for k, v in self.state.items()}
+
+    @property
+    def measured(self) -> dict[str, bool]:
+        """有沒有量測值。UNCERTAIN 也算有量測——這正是灰線存在的前提。"""
+        return {k: (v != SignalState.ABSENT) for k, v in self.state.items()}
 
 
 def _clamp01(x: float) -> float:
@@ -185,10 +213,13 @@ class SignalExtractor:
             self._detect_history.pop(0)
 
         confidence = self.confidence
-        face_trustworthy = frame.has_face and confidence >= CONFIDENCE_THRESHOLD
+        # 有沒有量測,只看臉在不在;信心只決定 OK 還是 UNCERTAIN。
+        # 這是 M0-T03 的核心修正:低信心不再抹掉量測值,否則灰線永遠畫不出來。
+        confident = confidence >= CONFIDENCE_THRESHOLD
+        face_state = SignalState.OK if confident else SignalState.UNCERTAIN
 
         values: dict[str, Optional[float]] = {}
-        valid: dict[str, bool] = {}
+        state: dict[str, SignalState] = {}
 
         # --- blendshape 訊號:brow_down / mouth_smile -------------------------
         blend = frame.blendshapes
@@ -196,16 +227,16 @@ class SignalExtractor:
             ("brow_down", ("browDownLeft", "browDownRight")),
             ("mouth_smile", ("mouthSmileLeft", "mouthSmileRight")),
         ):
-            if face_trustworthy and blend and left_key in blend and right_key in blend:
+            if frame.has_face and blend and left_key in blend and right_key in blend:
                 values[name] = _clamp01((blend[left_key] + blend[right_key]) / 2.0)
-                valid[name] = True
+                state[name] = face_state
             else:
                 values[name] = None
-                valid[name] = False
+                state[name] = SignalState.ABSENT
 
         # --- head_stability --------------------------------------------------
         stability: Optional[float] = None
-        if face_trustworthy and frame.head_pose is not None:
+        if frame.has_face and frame.head_pose is not None:
             if self._prev_pose is not None and self._prev_pose_ts_ms is not None:
                 dt = (frame.timestamp_ms - self._prev_pose_ts_ms) / 1000.0
                 if MIN_DT_S <= dt <= MAX_DT_S:
@@ -220,23 +251,26 @@ class SignalExtractor:
             self._prev_pose = frame.head_pose
             self._prev_pose_ts_ms = frame.timestamp_ms
         else:
-            # 臉不在或不可信:丟掉上一幀姿態,臉回來後從頭累積,
+            # 臉不在畫面:丟掉上一幀姿態,臉回來後從頭累積,
             # 不跨越空窗期算變化率(那會是假的劇烈變化)。
+            # 注意門檻是 has_face,不是信心——低信心期間姿態仍然量得到,
+            # 線要連著畫成灰色,只有真的沒臉才准斷。
             self._prev_pose = None
             self._prev_pose_ts_ms = None
 
         values["head_stability"] = stability
-        valid["head_stability"] = stability is not None
+        state["head_stability"] = SignalState.ABSENT if stability is None else face_state
 
         # --- mic_volume(可選,與臉無關)---------------------------------------
         mic_value = self._mic.level() if self._mic is not None else None
         values["mic_volume"] = mic_value
-        valid["mic_volume"] = mic_value is not None
+        # 麥克風有開就是可信的量測,不受臉的信心影響。
+        state["mic_volume"] = SignalState.ABSENT if mic_value is None else SignalState.OK
 
         return SignalSample(
             timestamp_ms=frame.timestamp_ms,
             values=values,
-            valid=valid,
+            state=state,
             confidence=confidence,
             has_face=frame.has_face,
         )
